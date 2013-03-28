@@ -1,0 +1,22 @@
+diff -u -r mobile/declarative/graph2dmobile.cpp mobilenew/declarative/graph2dmobile.cpp
+--- mobile/declarative/graph2dmobile.cpp	2013-03-02 10:14:57.519783242 -0500
++++ mobilenew/declarative/graph2dmobile.cpp	2013-03-02 09:37:28.000000000 -0500
+@@ -115,9 +115,9 @@
+ 	QColor fcolor = randomFunctionColor();
+ 	
+ 	QStringList err;
+-	PlotBuilder req = PlotsFactory::self()->requestPlot(e, Dim2D);
++    PlotBuilder req = PlotsFactory::self()->requestPlot(e, Dim2D, vars);
+ 	if(req.canDraw()) {
+-		PlaneCurve* it = static_cast<PlaneCurve*>(req.create(fcolor, fname, vars));
++        PlaneCurve* it = static_cast<PlaneCurve*>(req.create(fcolor, fname));
+ 		
+ 		if(it->isCorrect())
+ 			plotsmodel->addPlot(it);
+@@ -128,4 +128,4 @@
+ 	}
+ 	
+ 	return err;
+-}
+\ No newline at end of file
++}

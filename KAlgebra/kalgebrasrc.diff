@@ -1,0 +1,61 @@
+diff -u -r src/dictionary.cpp srcnew/dictionary.cpp
+--- src/dictionary.cpp	2013-03-02 10:14:57.627783235 -0500
++++ srcnew/dictionary.cpp	2013-03-02 08:37:43.000000000 -0500
+@@ -120,7 +120,7 @@
+ 		if(!error.isEmpty())
+ 			qDebug() << "dict formula error: " << error << e.toMathMLPresentation();
+ 
+-		m_funcs->addPlot(Analitza::PlotsFactory::self()->requestPlot(e, Analitza::Dim2D).create(QColor(0,150,0), "dict", m_vars));
++        m_funcs->addPlot(Analitza::PlotsFactory::self()->requestPlot(e, Analitza::Dim2D, m_vars).create(QColor(0,150,0), "dict"));
+ 	} else {
+ 		QString error;
+ 		m_name->setText(QString());
+diff -u -r src/functionedit.cpp srcnew/functionedit.cpp
+--- src/functionedit.cpp	2013-03-02 10:14:57.627783235 -0500
++++ srcnew/functionedit.cpp	2013-03-02 08:38:14.000000000 -0500
+@@ -304,8 +304,8 @@
+ 
+ PlaneCurve* FunctionEdit::createFunction() const
+ {
+-	PlotBuilder req = PlotsFactory::self()->requestPlot(expression(), Dim2D);
+-	PlaneCurve* curve = static_cast<PlaneCurve*>(req.create(color(), name(), m_vars));
++    PlotBuilder req = PlotsFactory::self()->requestPlot(expression(), Dim2D, m_vars);
++    PlaneCurve* curve = static_cast<PlaneCurve*>(req.create(color(), name()));
+ 	curve->setResolution(resolution);
+ 	if(m_calcUplimit != m_calcDownlimit) {
+ 		foreach(const QString& var, curve->parameters())
+diff -u -r src/kalgebra.cpp srcnew/kalgebra.cpp
+--- src/kalgebra.cpp	2013-03-02 10:14:57.627783235 -0500
++++ srcnew/kalgebra.cpp	2013-03-02 08:36:53.000000000 -0500
+@@ -392,8 +392,7 @@
+ {
+ 	qDebug() << "adding" << exp.toString();
+ 	
+-	Analitza::PlotItem* curve = Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim2D).create(randomFunctionColor(), b_funcsModel->freeId(),
+-																		   c_results->analitza()->variables());
++    Analitza::PlotItem* curve = Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim2D,c_results->analitza()->variables()).create(randomFunctionColor(), b_funcsModel->freeId());
+ 	b_funcsModel->addPlot(curve);
+ 	
+ 	m_tabs->setCurrentIndex(1);
+@@ -517,10 +516,10 @@
+ {
+ #ifdef HAVE_OPENGL
+ 	Analitza::Expression exp = t_exp->expression();
+-	Analitza::PlotBuilder plot = Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim3D);
++    Analitza::PlotBuilder plot = Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim3D,c_results->analitza()->variables());
+ 	if(plot.canDraw()) {
+ 		t_model3d->clear();
+-		t_model3d->addPlot(plot.create(Qt::yellow, "func3d", c_results->analitza()->variables()));
++        t_model3d->addPlot(plot.create(Qt::yellow, "func3d"));
+ 	} else
+ 		changeStatusBar(i18n("Errors: %1", plot.errors().join(i18n(", "))));
+ #endif
+@@ -678,7 +677,7 @@
+ {
+ #ifdef HAVE_OPENGL
+ 	t_model3d->clear();
+-	t_model3d->addPlot(Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim3D).create(Qt::yellow, "func3d_console", c_results->analitza()->variables()));
++    t_model3d->addPlot(Analitza::PlotsFactory::self()->requestPlot(exp, Analitza::Dim3D, c_results->analitza()->variables()).create(Qt::yellow, "func3d_console"));
+ 	m_tabs->setCurrentIndex(2);
+ #endif
+ }
