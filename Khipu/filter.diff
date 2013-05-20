@@ -1,0 +1,87 @@
+diff --git a/src/dashboard.cpp b/src/dashboard.cpp
+index 688a49d..1f94507 100644
+--- a/src/dashboard.cpp
++++ b/src/dashboard.cpp
+@@ -87,6 +87,12 @@ Dashboard::Dashboard(QWidget *parent)
+     m_widget->setupUi(this);
+ }
+ 
++Dashboard::Dashboard(Dashboard* source){
++    m_document=source->m_document;
++    m_widget=source->m_widget;
++    m_spacesProxyModel=source->m_spacesProxyModel;
++}
++
+ Dashboard::~Dashboard()
+ {
+ //     QAbstractItemDelegate *d = m_widget->spacesView->itemDelegate();
+diff --git a/src/dashboard.h b/src/dashboard.h
+index a2a9c46..4325707 100644
+--- a/src/dashboard.h
++++ b/src/dashboard.h
+@@ -76,6 +76,7 @@ class Dashboard : public QStackedWidget
+ public:
+ 
+     Dashboard(QWidget *parent = 0);
++    Dashboard(Dashboard* source);
+     ~Dashboard();
+ 
+     void setDocument(DataStore *doc);
+diff --git a/src/filter.cpp b/src/filter.cpp
+index 16b6b8e..bd463a6 100644
+--- a/src/filter.cpp
++++ b/src/filter.cpp
+@@ -40,15 +40,17 @@ void Filter::getDimIndex(int index)
+ {
+     switch (index)
+     {
+-        case 0: emit filterByDimension(Analitza::DimAll); break;
+-        case 1: emit filterByDimension(Analitza::Dim2D); break;
+-        case 2: emit filterByDimension(Analitza::Dim3D); break;
++        case 0: m_filterDashboard->filterByDimension(Analitza::DimAll); break;
++        case 1: m_filterDashboard->filterByDimension(Analitza::Dim2D); break;
++        case 2: m_filterDashboard->filterByDimension(Analitza::Dim3D); break;
+     }
+ }
++void Filter::setFilterDashboard(Dashboard *sourceDashboard){
++    m_filterDashboard= new Dashboard(sourceDashboard);
++}
+ 
+ 
+ 
+ 
+-
+     
+-    
+\ No newline at end of file
++    
+diff --git a/src/filter.h b/src/filter.h
+index 80085f3..840dd16 100644
+--- a/src/filter.h
++++ b/src/filter.h
+@@ -46,9 +46,10 @@ signals: //TODO better names for signals adn slots
+ private slots:
+     void getDimIndex(int index);
+     
+-    
++public:
++    void setFilterDashboard(Dashboard *sourceDashboard);
+ private:
+-    
++    Dashboard *m_filterDashboard;
+     Ui::FilterWidget *m_widget;
+ };
+ 
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 9d6e010..896f9c0 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -76,6 +76,8 @@ MainWindow::MainWindow(QWidget *parent)
+     setupGUI(Keys | StatusBar | Save | Create, "khipu.rc");
+ 
+     m_filter = new Filter(this);
++    m_filter->setFilterDashboard(m_dashboard);
++
+     
+     connect(m_filter, SIGNAL(filterByDimension(Dimensions)), m_dashboard, SLOT(filterByDimension(Dimensions)));
+     connect(m_filter, SIGNAL(filterByText(QString)), m_dashboard, SLOT(filterByText(QString)));

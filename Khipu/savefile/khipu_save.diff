@@ -1,0 +1,523 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f7dc583..89d1e85 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,12 +6,14 @@ include(KDE4Defaults)
+ find_package ( OpenGL REQUIRED )
+ find_package ( Gettext REQUIRED )
+ find_package ( Analitza REQUIRED )
++find_package ( qjson REQUIRED )
++
+ find_package(LibKdeEdu)
+ find_library(QTMML_LIBRARY qtmmlwidget)
+ 
+ macro_log_feature(QTMML_LIBRARY "QtMathML Widget" "Supports displaying some formulas in a mathematic form" "http://doc.qt.nokia.com/solutions/4/qtmmlwidget/qtmmlwidget.html" FALSE "" "")
+ 
+-add_definitions (${QT_DEFINITIONS} ${KDE4_DEFINITIONS} -DQT_USE_FAST_CONCATENATION -DQT_USE_FAST_OPERATOR_PLUS)
++add_definitions (${QT_DEFINITIONS} ${KDE4_DEFINITIONS} ${qjson_DEFINITIONS} -DQT_USE_FAST_CONCATENATION -DQT_USE_FAST_OPERATOR_PLUS)
+ 
+ if(NOT OPENGL_GLU_FOUND)
+     message(FATAL_ERROR "GLU was not found")
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 0a50c54..7bf8384 100755
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -5,6 +5,7 @@ include_directories (
+   ${LIBKDEEDU_INCLUDE_DIR}/qtmml 
+   ${ANALITZA_INCLUDE_DIR}
+   ${OPENGL_INCLUDE_DIR}
++  ${qjson_INCLUDE_DIR}
+   ${CMAKE_CURRENT_SOURCE_DIR}
+   .
+   ..
+@@ -51,6 +52,7 @@ kde4_add_executable ( khipu ${khipu_SRCS} )
+ target_link_libraries( khipu
+   ${KDE4_KFILE_LIBS}
+   ${ANALITZA_LIBRARY} ${ANALITZAGUI_LIBRARY} ${ANALITZAPLOT_LIBRARY}
++  ${qjson_LIBRARIES}
+     #OpenGL
+   ${OPENGL_gl_LIBRARY}
+   ${OPENGL_glu_LIBRARY}
+diff --git a/src/datastore.cpp b/src/datastore.cpp
+index 616e0cc..5f468e6 100644
+--- a/src/datastore.cpp
++++ b/src/datastore.cpp
+@@ -127,6 +127,11 @@ void DataStore::mapPlot(const QModelIndex & parent, int start, int end)
+    // emit gridStyleChanged(i);
+ }
+ 
++void DataStore::mapPlotFixed(Analitza::PlotItem* item){
++    qDebug() << item->name();
++    m_mapsFixed.insertMulti(m_spacesModel->space(m_currentSpace), item);
++}
++
+ void DataStore::selectCurrentPlot(const QModelIndex& curr, const QModelIndex& prev)
+ {
+     if (!curr.isValid())
+diff --git a/src/datastore.h b/src/datastore.h
+index a1276a7..555970a 100644
+--- a/src/datastore.h
++++ b/src/datastore.h
+@@ -56,7 +56,8 @@ public:
+     SpacePlotsFilterProxyModel * currentPlots() const { return m_spacePlotsFilterProxyModel; }
+     QItemSelectionModel *currentSelectionModel() const { return m_currentSelectionModel; }
+     QItemSelectionModel *currentSpaceSelectionModel() const { return m_currentSpaceSelectionModel; }
+-
++    QMap<DictionaryItem*, Analitza::PlotItem*> currentDataMap() const { return m_mapsFixed; }
++    void mapPlotFixed(Analitza::PlotItem* item);
+ 
+     bool isMapped(DictionaryItem *space, Analitza::PlotItem *plot) const;
+ 
+@@ -77,6 +78,7 @@ signals:
+ 
+     void spaceActivated(int spaceidx);
+     void gridStyleChanged(int i); // 1 cartesian 2 polar
++
+ private:
+     Analitza::PlotsDictionaryModel *m_plotsDictionaryModel;
+     DictionariesModel *m_spacesModel;
+@@ -91,6 +93,8 @@ private:
+     //one to many -- space index -> many plots index
+     int m_currentSpace; // curr space index 
+     QMap<DictionaryItem*, Analitza::PlotItem*> m_maps;
++    QMap<DictionaryItem*, Analitza::PlotItem*> m_mapsFixed;
++
+ };
+ 
+ 
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 9d6e010..8af3e25 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -20,19 +20,24 @@
+ 
+ #include <analitzaplot/plotsdictionarymodel.h>
+ #include <analitzaplot/planecurve.h>
++#include <analitzaplot/functiongraph.h>
+ #include <analitzagui/plotsview2d.h>
+ #include <analitzagui/plotsview3d.h>
+ #include <dictionaryitem.h>
+ #include <analitza/expression.h>
++#include <analitzaplot/plotsmodel.h>
+ 
+ #include <KDE/KApplication>
+ 
++#include <QBuffer>
+ #include <QtGui/QDockWidget>
+ #include <QtGui/QLayout>
+ #include <QLineEdit>
+ #include <qpushbutton.h>
+ #include <QToolButton>
+ #include <QDebug>
++#include <QFileDialog>
++
+ #include <KDE/KLocale>
+ #include <KDE/KLocalizedString>
+ #include <KDE/KStandardDirs>
+@@ -45,6 +50,7 @@
+ #include <KIO/NetAccess>
+ #include <KDE/KMessageBox>
+ #include <KDE/KStandardDirs>
++#include <KDE/KToolInvocation>
+ #include <KToolBar>
+ #include "dictionariesmodel.h"
+ #include <KMenuBar>
+@@ -56,6 +62,8 @@
+ #include "spaceinformation.h"
+ #include "spaceoptions.h"
+ #include "filter.h"
++#include <qjson/serializer.h>
++#include <qjson/parser.h>
+ 
+ MainWindow::MainWindow(QWidget *parent)
+     : KXmlGuiWindow(parent)
+@@ -182,9 +190,9 @@ void MainWindow::setupActions()
+ {
+     //file
+     KStandardAction::openNew(this, SLOT(newFile()), actionCollection());
+-    KStandardAction::open(this, SLOT(fooSlot()), actionCollection());
++    KStandardAction::open(this, SLOT(openFile()), actionCollection());
+     KStandardAction::openRecent(this, SLOT(fooSlot()), actionCollection());    
+-    KStandardAction::save(this, SLOT(fooSlot()), actionCollection());
++    KStandardAction::save(this, SLOT(saveFile()), actionCollection());
+     KStandardAction::saveAs(this, SLOT(fooSlot()), actionCollection());
+     KStandardAction::close(this, SLOT(close()), actionCollection());
+     KStandardAction::quit(this, SLOT(close()), actionCollection());
+@@ -314,12 +322,175 @@ void MainWindow::newFile()
+ {
+ //     MainWindow * newWnd = new MainWindow();
+ //     newWnd->show();
++    KToolInvocation::kdeinitExec("khipu");
+ }
+ void MainWindow::openFile()
+ {
+  
+ }
+ 
++void MainWindow::saveFile() {
++    qDebug() << "working..";
++
++    QMap<DictionaryItem*, Analitza::PlotItem*> map=m_document->currentDataMap();
++    if(map.empty())
++    {
++        qDebug() << "map is empty";
++        // just starting #no plot is available so no need to save
++        return;
++    }
++
++    QList<DictionaryItem*> spaceList=map.uniqueKeys();
++    if(spaceList.empty()){
++            qDebug() << "list is empty";
++            return;
++    }
++
++    QVariantList plotspace_list;
++
++    if(m_savedSpaces > 0){ // home is clicked or not.!
++    // do this for the whole list and write at that time into a file
++
++    int i,j;
++    for(i=0;i<m_savedSpaces;i++){
++
++        DictionaryItem* space=spaceList.at(i);
++        QString spaceName = space->title();
++        QString spaceDesc = space->description();
++        int dim = space->dimension();
++
++        QVariantList subplot_list;
++        subplot_list.clear();
++
++        QVariantMap plotspace;
++        plotspace.insert("name",spaceName);
++        plotspace.insert("description",spaceDesc);
++        plotspace.insert("dimension",dim);
++        plotspace.insert("image",imageList.at(i));
++
++        QList<Analitza::PlotItem*> plotList=map.values(space);
++                   for (j=0;j<plotList.size();j++) {
++                   Analitza::PlotItem* plotitem=plotList.at(j);
++                   if(plotitem==0){
++                       qDebug() << "null";
++                       exit(0);
++                   }
++                   else qDebug() << "not null";
++                   QString plotName=plotitem->name();
++                   QString plotExpression=plotitem->expression().toString();
++                   QVariantMap plot;
++                   plot.insert("name",plotName);
++                   plot.insert("expression",plotExpression);
++                   if(dim==2){
++                    Analitza::FunctionGraph*functiongraph=static_cast<Analitza::FunctionGraph*> (plotList.at(j));
++                    double arg1min=functiongraph->interval(functiongraph->parameters().at(0)).first;
++                    double arg1max=functiongraph->interval(functiongraph->parameters().at(0)).second;
++                    plot.insert("arg1min",arg1min);
++                    plot.insert("arg1max",arg1max);
++                   }
++                   //writehere
++                   subplot_list << plot;
++                   }
++                   QJson::Serializer subserializer;
++                   QByteArray subjson = subserializer.serialize(subplot_list);
++
++                   plotspace.insert("plots",subjson);
++                   plotspace_list << plotspace;
++              }
++        }
++
++          if(m_totalSpaces > m_savedSpaces) {  // if addspaces button is hit more than home
++          // need to save the current space
++              DictionaryItem* space=spaceList.at(m_totalSpaces-1); // use this just to get the plots because it does not contain correct space information
++              int dim = space->dimension();
++              QString activeSpaceTitle=m_spaceInfoDock->title();
++              QString activeSpacedescr=m_spaceInfoDock->description();
++
++              QVariantList subplot_list;
++              subplot_list.clear();
++
++              QVariantMap plotspace;
++              plotspace.insert("name",activeSpaceTitle);
++              plotspace.insert("description",activeSpacedescr);
++              plotspace.insert("dimension",dim);
++
++              // to save the current space thumbnail....
++              QPixmap thumbnail;
++              switch (space->dimension())
++              {
++                  case Analitza::Dim2D:
++                      thumbnail = QPixmap::grabWidget(m_dashboard->view2d());
++                      break;
++                  case Analitza::Dim3D:
++                  {
++                      m_dashboard->view3d()->updateGL();
++                      m_dashboard->view3d()->setFocus();
++                      m_dashboard->view3d()->makeCurrent();
++                      m_dashboard->view3d()->raise();
++
++                      QImage image(m_dashboard->view3d()->grabFrameBuffer(true));
++
++                      thumbnail = QPixmap::fromImage(image, Qt::ColorOnly);
++
++                      break;
++                  }
++              }
++              QString imageInText=thumbnailtoString(&thumbnail);
++              plotspace.insert("image",imageInText);
++
++
++              QList<Analitza::PlotItem*> plotList=map.values(space);
++                         for (int j=0;j<plotList.size();j++) {
++                         Analitza::PlotItem* plotitem=plotList.at(j);
++                         if(plotitem==0){
++                             qDebug() << "null";
++                             exit(0);
++                         }
++                         else qDebug() << "not null";
++                         QString plotName=plotitem->name();
++                         QString plotExpression=plotitem->expression().toString();
++                         QVariantMap plot;
++                         plot.insert("name",plotName);
++                         plot.insert("expression",plotExpression);
++                         if(dim==2){
++                          Analitza::FunctionGraph*functiongraph=static_cast<Analitza::FunctionGraph*> (plotList.at(j));
++                          double arg1min=functiongraph->interval(functiongraph->parameters().at(0)).first;
++                          double arg1max=functiongraph->interval(functiongraph->parameters().at(0)).second;
++                          plot.insert("arg1min",arg1min);
++                          plot.insert("arg1max",arg1max);
++                         }
++                         //writehere
++
++                         subplot_list << plot;
++                         }
++
++              QJson::Serializer subserializer;
++              QByteArray subjson = subserializer.serialize(subplot_list);
++
++              plotspace.insert("plots",subjson);
++              plotspace_list << plotspace;
++           }
++
++          QJson::Serializer serializer;
++          QByteArray json = serializer.serialize(plotspace_list);
++          QString path;
++          path = QFileDialog::getSaveFileName(this, tr("Save File (Please save with extension .khipu) "),"/");
++          if(path==""){
++              qDebug() << "error in saving file...may be path not found." ;
++              return;
++          }
++          qDebug() << "path: " << path;
++          QFile *file = new QFile(path,this);
++          if(!file->open(QFile::WriteOnly | QFile::Text)){
++              qDebug() << "Error in writing";
++              exit(0);
++          }
++          QTextStream out(file);
++          out << json;
++          file->close();
++
++}
++
+ void MainWindow::activateSpace(int spaceidx)
+ {
+     activateSpaceUi();
+@@ -468,6 +639,9 @@ void MainWindow::setVisibleDictionary()
+ 
+ void MainWindow::addSpace2D()
+ {
++    m_currentSpaceDim=2;
++    m_totalSpaces++;
++
+     activateSpaceUi();
+     
+     m_dashboard->showPlotsView2D();
+@@ -476,6 +650,9 @@ void MainWindow::addSpace2D()
+ 
+ void MainWindow::addSpace3D()
+ {
++    m_currentSpaceDim=3;
++    m_totalSpaces++;
++
+     activateSpaceUi();
+     
+     m_dashboard->showPlotsView3D();
+@@ -525,6 +702,8 @@ void MainWindow::goHome()
+                 break;
+             }
+         }
++        QString imageInText=thumbnailtoString(&thumbnail);
++        imageList.append(imageInText);
+ 
+         thumbnail = thumbnail.scaled(QSize(PreviewWidth, PreviewHeight), Qt::IgnoreAspectRatio,Qt::SmoothTransformation);   
+         space->setThumbnail(thumbnail);
+@@ -534,6 +713,16 @@ void MainWindow::goHome()
+     activateDashboardUi();
+ }
+ 
++QString MainWindow::thumbnailtoString(QPixmap *thumbnail){
++    QImage image = thumbnail->toImage();
++    QByteArray imageArray;
++    QBuffer buffer(&imageArray);
++    buffer.open(QIODevice::WriteOnly);
++    image.save(&buffer, "PNG");
++    QByteArray compressedImage = qCompress(buffer.data(), 9).toHex();
++    QString str(compressedImage);
++return str;
++}
+ void MainWindow::buildCartesianGraphCurve()
+ {
+     addSpace2D();
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 1f059f8..a0338de 100644
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -50,6 +50,7 @@ public:
+ public slots:
+     void newFile();
+     void openFile();
++     void saveFile();
+     void activateSpace(int);
+ 
+ private slots:
+@@ -88,17 +89,22 @@ private:
+     void setupActions();
+     void setupToolBars();
+     bool queryClose();
++    QString thumbnailtoString(QPixmap *thumbnail);
+ 
+ private:
+     DataStore *m_document;
+     Dashboard *m_dashboard;
+     Filter *m_filter;
+-    
++    int m_currentSpaceDim;
++    int m_totalSpaces=0; // total hits to addspace2d + addspace3D
++    int m_savedSpaces=0; // total hits to home
++
+     QDockWidget *m_plotsBuilderDock;
+     PlotsEditor *m_spacePlotsDock;
+     SpaceInformation *m_spaceInfoDock;
+     SpaceOptions *m_spaceOptionsDock;
+-    
++     QStringList imageList;
++
+     //remove this
+     
+ private slots:
+diff --git a/src/plotseditor.cpp b/src/plotseditor.cpp
+index 106cdf5..788379d 100644
+--- a/src/plotseditor.cpp
++++ b/src/plotseditor.cpp
+@@ -707,8 +707,10 @@ void PlotsEditor::savePlot()
+                 
+                 item->setInterval(item->parameters().first(), m_widget->minx->expression(), m_widget->maxx->expression());
+ 
+-                if(!isEditing)
++                if(!isEditing) {
+                     m_document->plotsModel()->addPlot(item);
++                    m_document->mapPlotFixed(item);
++                }
+             } else
+                 errors = req.errors();
+ 
+@@ -727,11 +729,13 @@ void PlotsEditor::savePlot()
+                 } else
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                
+-                item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
+-                item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
++             //   item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
++             //   item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing){
+                     m_document->plotsModel()->addPlot(item);
++                     m_document->mapPlotFixed(item);
++                }
+             } else {
+                 errors = req.errors();
+ 			}
+@@ -750,11 +754,13 @@ void PlotsEditor::savePlot()
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                 }
+                 
+-                item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
+-                item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
++               // item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
++             //   item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing) {
+                     m_document->plotsModel()->addPlot(item);
++                     m_document->mapPlotFixed(item);
++                }
+             } else
+                 errors = req.errors();
+ 
+@@ -772,12 +778,14 @@ void PlotsEditor::savePlot()
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                 }
+                 
+-                item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
+-                item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
+-                item->setInterval(item->parameters().at(2), m_widget->minz->expression(), m_widget->maxz->expression());
++            //    item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
++             //   item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
++           //     item->setInterval(item->parameters().at(2), m_widget->minz->expression(), m_widget->maxz->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing){
+                     m_document->plotsModel()->addPlot(item);
++                     m_document->mapPlotFixed(item);
++                }
+             } else
+                 errors = req.errors();
+ 
+@@ -796,11 +804,13 @@ void PlotsEditor::savePlot()
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                 }
+                
+-                item->setInterval(item->parameters().first(), m_widget->minx->expression(), m_widget->maxx->expression());
++              //  item->setInterval(item->parameters().first(), m_widget->minx->expression(), m_widget->maxx->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing) {
+                     m_document->plotsModel()->addPlot(item);
+-            } else
++                     m_document->mapPlotFixed(item);
++                }
++            }else
+                 errors = req.errors();
+ 
+             break;
+@@ -818,10 +828,12 @@ void PlotsEditor::savePlot()
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                 }
+                 
+-                item->setInterval(item->parameters().first(), m_widget->minx->expression(), m_widget->maxx->expression());
++          //      item->setInterval(item->parameters().first(), m_widget->minx->expression(), m_widget->maxx->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing) {
+                     m_document->plotsModel()->addPlot(item);
++                     m_document->mapPlotFixed(item);
++                }
+             } else
+                 errors = req.errors();
+             
+@@ -839,12 +851,13 @@ void PlotsEditor::savePlot()
+                     item = req.create(m_widget->plotColor->color(), m_widget->plotName->text());
+                 }
+                 
+-                item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
+-                item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
++           //     item->setInterval(item->parameters().at(0), m_widget->minx->expression(), m_widget->maxx->expression());
++           //     item->setInterval(item->parameters().at(1), m_widget->miny->expression(), m_widget->maxy->expression());
+ 
+-                if (!isEditing)
++                if (!isEditing) {
+                     m_document->plotsModel()->addPlot(item);
+-                
++                     m_document->mapPlotFixed(item);
++                }
+             } else
+                 errors = req.errors();
+             break;
